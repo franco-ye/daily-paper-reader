@@ -12,7 +12,10 @@ import time
 from datetime import datetime, timezone
 from typing import Any, Dict, Iterator, List, Tuple
 import requests
-import torch
+try:
+    import torch
+except Exception:  # pragma: no cover
+    torch = None
 
 SRC_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if SRC_DIR not in sys.path:
@@ -150,6 +153,20 @@ def resolve_default_raw_path(date_str: str, backend_key: str) -> str:
         prefix = "emnlp_papers"
     elif safe_backend == "aaai":
         prefix = "aaai_papers"
+    elif safe_backend == "cvpr":
+        prefix = "cvpr_papers"
+    elif safe_backend == "eccv":
+        prefix = "eccv_papers"
+    elif safe_backend == "ijcai":
+        prefix = "ijcai_papers"
+    elif safe_backend == "osdi":
+        prefix = "osdi_papers"
+    elif safe_backend == "sosp":
+        prefix = "sosp_papers"
+    elif safe_backend == "ieee_sp":
+        prefix = "ieee_sp_papers"
+    elif safe_backend == "ndss":
+        prefix = "ndss_papers"
     return os.path.join(ROOT_DIR, "archive", date_str, "raw", f"{prefix}_{date_str}.json")
 
 
@@ -184,14 +201,15 @@ def configure_local_embedding_runtime(reserve_upload_cpus: int) -> Tuple[int, in
     for key in thread_env_keys:
         os.environ[key] = str(embed_cpus)
     os.environ["TOKENIZERS_PARALLELISM"] = "true"
-    try:
-        torch.set_num_threads(embed_cpus)
-    except Exception:
-        pass
-    try:
-        torch.set_num_interop_threads(max(min(embed_cpus // 4, 8), 1))
-    except Exception:
-        pass
+    if torch is not None:
+        try:
+            torch.set_num_threads(embed_cpus)
+        except Exception:
+            pass
+        try:
+            torch.set_num_interop_threads(max(min(embed_cpus // 4, 8), 1))
+        except Exception:
+            pass
     return embed_cpus, reserved
 
 
@@ -362,8 +380,10 @@ def resolve_embed_devices(embed_devices: str, embed_device: str) -> List[str]:
     if single and single.lower() != "auto":
         return [single]
 
-    if torch.cuda.is_available():
-        count = int(torch.cuda.device_count() or 0)
+    cuda_mod = getattr(torch, "cuda", None)
+    cuda_available = bool(cuda_mod and getattr(cuda_mod, "is_available", lambda: False)())
+    if cuda_available:
+        count = int(getattr(cuda_mod, "device_count", lambda: 0)() or 0)
         if count >= 1:
             return [f"cuda:{idx}" for idx in range(count)]
     return ["cpu"]
@@ -394,7 +414,7 @@ def normalize_paper(x: Dict[str, Any]) -> Dict[str, Any] | None:
     pid = _norm(x.get("id"))
     if not pid:
         return None
-    return {
+    row = {
         "id": pid,
         "title": _norm(x.get("title")),
         "abstract": _norm(x.get("abstract")),
@@ -406,6 +426,10 @@ def normalize_paper(x: Dict[str, Any]) -> Dict[str, Any] | None:
         "source": _norm(x.get("source") or "supabase"),
         "updated_at": _now_iso(),
     }
+    pdf_url = _norm(x.get("pdf_url"))
+    if pdf_url:
+        row["pdf_url"] = pdf_url
+    return row
 
 
 def deduplicate_rows_by_id(rows: List[Dict[str, Any]]) -> tuple[List[Dict[str, Any]], int]:
